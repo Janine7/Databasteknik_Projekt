@@ -175,110 +175,98 @@ def clear_purchase_table(session):
 def make_purchase(session):
     try:
         total_price = 0
-        purchase_id = get_next_purchase_id(session)
-        while True:
-            print("If you would like to view your shopping cart enter 'Cart'.") 
-            print("If you would like to view all our products enter 'Products'")
-            print("If you would like to remove an item from the shopping cart enter 'Remove'")
+        purchase_complete = False
+
+        while not purchase_complete:
+            print("If you would like to view your shopping cart, enter 'Cart'.")
+            print("If you would like to view all our products, enter 'Products'.")
+            print("If you would like to remove an item from the shopping cart, enter 'Remove'.")
             print("Enter the product ID (or 'No' to finish): ")
             product_id = input()
 
             if product_id.lower() == 'no':
                 break
-            else:
-                if product_id.lower() == 'cart':
-                    print_purchase()
-                    make_purchase(session)
-                    return
-                elif product_id.lower() == "products":
-                    print_productsList()
-                    make_purchase(session)
-                    return
-                elif product_id.lower() == "remove":
-                    remove_done = False
-                    print("Please enter the product ID of the item you would like to remove.")
-                    while not remove_done:
-                        remove_prod = input("Your choice (write 'End' to cancel remove): ")
-                        if remove_prod.isdigit():
-                            if int(remove_prod) < 41 and int(remove_prod) > 0:  # Adjust the range as needed
-                                remove_product_from_purchase(session, remove_prod, purchase_id)
-                                # print_purchase()
-                                make_purchase(session)
-                                return
-                            else:
-                                print("Invalid input! Please try again!")
+            elif product_id.lower() == 'cart':
+                print_purchase()
+                make_purchase(session)
+                return
+            elif product_id.lower() == "products":
+                print_productsList()
+                make_purchase(session)
+                return
+            elif product_id.lower() == "remove":
+                while True:
+                    print("Enter the product ID to remove or 'end' to cancel: ")
+                    product_id_remove = input()
+                    if product_id_remove.lower() == "end":
+                        print("Removal cancelled.")
+                        make_purchase(session)
+                        return
+                    elif product_id_remove.isdigit():
+                        if check_product_in_purchase(session, product_id_remove):
+                            remove_product_from_purchase(session, product_id_remove)
+                            make_purchase(session)
+                            return
                         else:
-                            if remove_prod.lower() == "end":
-                                remove_done = True
-                                make_purchase(session)
-                                return
-                            else:
-                                print("Invalid input! Please try again!")
+                            print("Product ID does not exist in the purchase. Try again or enter 'end' to cancel the removal.")
+                    else:
+                        print("Invalid input. Please enter a valid product ID or 'end' to cancel.")
+                        
+            elif product_id.isdigit():
+                print("Enter the quantity: ")
+                quantity = int(input())
 
-            print("Enter the quantity: ")
-            quantity = int(input())
+                # Retrieve the price of the selected product from the ProductsList table
+                price_sql = "SELECT Price FROM ProductsList WHERE ProdID = {};".format(product_id)
+                result = session.sql(price_sql).execute()
 
-            # Retrieve the price of the selected product from the ProductsList table
-            price_sql = "SELECT Price FROM ProductsList WHERE ProdID = {};".format(product_id)
-            result = session.sql(price_sql).execute()
+                # Fetch all the rows returned by the query
+                rows = result.fetch_all()
+                if len(rows) == 0:
+                    print("Invalid product ID. Please enter a valid product ID.")
+                    continue
 
-            # Fetch all the rows returned by the query
-            rows = result.fetch_all()
-            if len(rows) == 0:
-                print("Invalid product ID. Please enter a valid product ID.")
-                continue
+                # Extract the price from the first row
+                price = rows[0][0]
 
-            # Extract the price from the first row
-            price = rows[0][0]
+                # Calculate the total price for the current product
+                product_total_price = int(price) * int(quantity)
+                total_price += product_total_price
 
-            # Calculate the total price for the current product
-            product_total_price = int(price) * int(quantity)
-            total_price += product_total_price
+                # Insert the purchase into the Purchase table
+                insert_sql = """
+                INSERT INTO Purchase (PurchaseID, PurchaseDate, TotalPrice, Quantity, CustID, ProdID, Price)
+                VALUES (NULL, CURDATE(), {}, {}, 1, {}, {});
+                """.format(product_total_price, quantity, product_id, price)
 
-            # Insert the purchase into the Purchase table
-            insert_sql = """
-            INSERT INTO Purchase (PurchaseID, PurchaseDate, TotalPrice, Quantity, CustID, ProdID, Price)
-            VALUES (NULL, CURDATE(), {}, {}, 1, {}, {});
-            """.format(product_total_price, quantity, product_id, price)
+                print("Inserting into Purchase table: ")
+                session.sql(insert_sql).execute()
+                print("Product added to the purchase.")
 
-            print("Inserting into Purchase table: ")
-            session.sql(insert_sql).execute()
-            print("Purchase completed successfully.")
+            else:
+                print("invalid input, try again")
+                make_purchase(session)
 
     except DatabaseError as de:
         print(de.msg)
     except ValueError:
         print("Invalid input. Please enter a valid product ID and quantity.")
 
-
-def get_next_purchase_id(session):
+def check_product_in_purchase(session, product_id):
     try:
-        query = "SELECT MAX(PurchaseID) FROM Purchase;"
-        result = session.sql(query).execute()
-
-        # Fetch the maximum purchase ID
-        max_purchase_id = result.fetch_one()[0]
-
-        # Determine the next purchase ID
-        if max_purchase_id is None:
-            next_purchase_id = 1
-        else:
-            next_purchase_id = max_purchase_id + 1
-
-        return next_purchase_id
+        check_sql = "SELECT * FROM Purchase WHERE ProdID = {};".format(product_id)
+        result = session.sql(check_sql).execute()
+        rows = result.fetch_all()
+        return len(rows) > 0
     except DatabaseError as de:
         print(de.msg)
+        return False
 
-def remove_product_from_purchase(session, product_id, purchase_id):
+def remove_product_from_purchase(session, product_id):
     try:
-        delete_sql = """
-        DELETE FROM Purchase
-        WHERE PurchaseID = {} AND ProdID = {};
-        """.format(purchase_id, product_id)
-
-        session.sql(delete_sql).execute()
+        remove_sql = "DELETE FROM Purchase WHERE ProdID = {} AND CustID = 1;".format(product_id)
+        session.sql(remove_sql).execute()
         print("Product removed from the purchase.")
-        return
     except DatabaseError as de:
         print(de.msg)
 
@@ -349,60 +337,78 @@ def print_calculate_totalcost():
     total_cost = row[0]
     print("Total Cost: {}".format(total_cost))
 
+def call_functions(session):
+    print("Here is a list of all our products:\n")
+    print_productsList()
+    clear_purchase_table(session)
+    make_purchase(session)
+    print_purchase()
+    print_calculate_totalcost()
+    return
+
 if __name__ == '__main__':
     print("Welcome to our Food Store!\n")
     print("We're delighted to offer you a curated selection of mouthwatering food items.")
     print("Explore our collection of fresh ingredients and culinary delights.")
     print("Savor the flavors and elevate your culinary adventures. Enjoy your shopping experience with us!")
 
-    account_yes_no = input("Do you have an account with us? (Please enter 'yes' or 'no'):\n")
-    if account_yes_no == "yes":
-        social_security = input("Please enter your social security number (YYMMDDXXXX):\n")
-        find_customer = check_customer_existence(session, social_security)
-        if find_customer == 1:
-            print("Here is a list of all our products:\n")
-            print_productsList()
-            clear_purchase_table(session)
-            make_purchase(session)
-            print_purchase()
-            print_calculate_totalcost()
-        else:
-            create_account = input("You don't have an account. Do you want to create one? (Please enter 'yes' or 'no'):\n")
-            if create_account == "yes":
-                customer_name = input("Please enter your name:\n")
-                insert_into_customer(session, customer_name, social_security)
-                print("Here is a list of all our products:\n")
-                print_productsList()
-                clear_purchase_table(session)
-                make_purchase(session)
-                print_purchase()
-                print_calculate_totalcost()
-            else:
-                print("Thank you. Goodbye!")
-    elif account_yes_no == "no":
-        customer_name = input("Please enter your name:\n")
-        social_security = input("Please enter your social security number (YYMMDDXXXX):\n")
-        find_customer = check_customer_existence(session, social_security)
-        if find_customer == 1:
-            continue_purchase = input("You already have an account. Do you want to continue with the purchase? (Please enter 'yes' or 'no'):\n")
-            if continue_purchase == "yes":
-                print("Here is a list of all our products:\n")
-                print_productsList()
-                clear_purchase_table(session)
-                make_purchase(session)
-                print_purchase()
-                print_calculate_totalcost()
-            else:
-                print("Thank you. Goodbye!")
-        else:
-            insert_into_customer(session, customer_name, social_security)
-            print("Here is a list of all our products:\n")
-            print_productsList()
-            clear_purchase_table(session)
-            make_purchase(session)
-            print_purchase()
-            print_calculate_totalcost()
-    else:
-        print("Invalid input! Please try again!")
+    ok_input = False
+    while ok_input == False:
+        account_yes_no = input("Do you have an account with us? (Please enter 'yes' or 'no'):\n")
+        if account_yes_no == "yes":
+            ok_input = True
+            social_security_input = False
+            while social_security_input == False:
+                social_security = input("Please enter your social security number (YYMMDDXXXX):\n")
+                if len(social_security) == 10:
+                    social_security_input = True
+                    find_customer = check_customer_existence(session, social_security)
+                    if find_customer == 1:
+                        call_functions(session)
+                    else:
+                        input_ok = False
+                        while input_ok == False:
+                            create_account = input("You don't have an account. Do you want to create one? (Please enter 'yes' or 'no'):\n")
+                            if create_account == "yes":
+                                input_ok = True
+                                customer_name = input("Please enter your name:\n")
+                                insert_into_customer(session, customer_name, social_security)
+                                call_functions(session)
+                            elif create_account == "no":
+                                input_ok = True
+                                print("Thank you. Goodbye!")
+                            else:
+                                print("Invalid input, try again")
+                   
+                else:
+                        print("Invalid social security input, try again!")
 
-
+        elif account_yes_no == "no":
+            ok_input = True
+            customer_name = input("Please enter your name:\n")
+            social_security_input = False
+            while social_security_input == False:
+                social_security = input("Please enter your social security number (YYMMDDXXXX):\n")
+                if len(social_security) == 10:
+                    social_security_input = True
+                    find_customer = check_customer_existence(session, social_security)
+                    if find_customer == 1:
+                        input = False
+                        while input == False:
+                            continue_purchase = input("You already have an account. Do you want to continue with the purchase? (Please enter 'yes' or 'no'):\n")
+                            if continue_purchase == "yes":
+                                input = True
+                                print("Here is a list of all our products:\n")
+                                call_functions(session)
+                            elif continue_purchase == "no":
+                                input = True
+                                print("Thank you. Goodbye!")
+                            else:
+                                print("Invalid input, try again!")
+                    else:
+                        insert_into_customer(session, customer_name, social_security)
+                        call_functions(session)
+                else:
+                    print("Invalid social security number, try again")
+        else:
+            print("Invalid input! Please try again!")
